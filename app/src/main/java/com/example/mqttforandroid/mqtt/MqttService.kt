@@ -1,24 +1,31 @@
 package com.example.mqttforandroid.mqtt
 
 import android.util.Log
-import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import org.eclipse.paho.client.mqttv3.*
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 
 class MqttService {
     private var client: IMqttAsyncClient? = null
-    private var channel = Channel<Boolean>()
+    private lateinit var statusFlow: MutableStateFlow<Boolean>
+    private lateinit var msgFlow: MutableStateFlow<MqttMessage?>
 
     /**
      * Initialization MqttAsyncClient and setting MqttConnectOptions config
      *
      * @param config
-     * @param channel
+     * @param statusFlow
+     * @param msgFlow
      *
      * @return MqttService
      */
-    fun init(config: Config, channel: Channel<Boolean>): MqttService {
-        this.channel = channel
+    fun init(config: Config, statusFlow: MutableStateFlow<Boolean>, msgFlow: MutableStateFlow<MqttMessage?>): MqttService {
+        this.statusFlow = statusFlow
+        this.msgFlow = msgFlow
+
         client = MqttAsyncClient(
             config.host,
             config.clientId,
@@ -29,6 +36,9 @@ class MqttService {
         client?.setCallback(object : MqttCallback {
             override fun connectionLost(cause: Throwable?) {
                 Log.d("MqttForAndroid", "${javaClass.simpleName}::initMqtt(), mqtt connect lost")
+                CoroutineScope(Dispatchers.IO).launch {
+                    this@MqttService.statusFlow.value = false
+                }
             }
 
             override fun messageArrived(topic: String?, message: MqttMessage?) {
@@ -36,6 +46,9 @@ class MqttService {
                     "MqttForAndroid",
                     "${javaClass.simpleName}::init(), Receive Message, topic::$topic, msg: ${message.toString()}"
                 )
+                message?.let {
+                    msgFlow.value = it
+                }
             }
 
             override fun deliveryComplete(token: IMqttDeliveryToken?) {
@@ -58,13 +71,15 @@ class MqttService {
         return this
     }
 
-    suspend fun connect() {
+    fun connect() {
         try {
             val token = client?.connect(options)
             token?.waitForCompletion()
-            Log.d("MqttForAndroid", "${javaClass.simpleName}::connect(), mqtt connect:success1")
-
-            channel.send(true)
+            Log.d("MqttForAndroid", "${javaClass.simpleName}::connect(), mqtt connect:success")
+            CoroutineScope(Dispatchers.IO).launch {
+                Log.d("Coroutine:", "================2=")
+                statusFlow.value = true
+            }
         } catch (e: Exception) {
             e.printStackTrace()
             Log.e(
@@ -100,8 +115,6 @@ class MqttService {
         }
     }
 
-//    private lateinit var options: MqttConnectOptions
-
     companion object {
         @Volatile
         private var mqttService: MqttService? = null
@@ -110,55 +123,4 @@ class MqttService {
             mqttService ?: MqttService()
         }
     }
-
-//    public fun init(context: Context, config: Config) {
-//        client = MqttAndroidClient(context, config.host, config.clientId)
-//        client?.setCallback(object : MqttCallback {
-//            override fun connectionLost(cause: Throwable?) {
-//                Log.d("MqttForAndroid", "MainActivity::initMqtt(), mqtt connect lost")
-//            }
-//
-//            override fun messageArrived(topic: String?, message: MqttMessage?) {
-//                Log.d(
-//                    "MqttForAndroid",
-//                    "MainActivity::initMqtt(), Receive Message, topic::$topic, msg: ${message.toString()}"
-//                )
-//            }
-//
-//            override fun deliveryComplete(token: IMqttDeliveryToken?) {
-//                Log.d("MqttForAndroid", "MainActivity::initMqtt(), deliveryComplete")
-//            }
-//        })
-//
-//        options = MqttConnectOptions()
-//        options.isCleanSession = config.option.cleanSession
-//        options.connectionTimeout = config.option.timeOut
-//        options.keepAliveInterval = config.option.keepAliveInterval
-//        options.isAutomaticReconnect = config.option.automaticReconnect
-//        config.username?.let {
-//            options.userName = it
-//        }
-//        config.password?.let {
-//            options.password = it.toCharArray()
-//        }
-//    }
-//
-//    public fun connect() {
-//        try {
-//
-//        } catch (e: Exception) {
-//            e.printStackTrace()
-//            Log.e(
-//                "MqttForAndroid", "Mqtt::connect(), connect fail, error:${e.message}"
-//            )
-//        }
-//    }
-//
-//    public fun subscribe() {
-//
-//    }
-//
-//    public fun publisher() {
-//
-//    }
 }

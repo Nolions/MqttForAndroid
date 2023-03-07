@@ -3,22 +3,34 @@ package com.example.mqttforandroid
 import android.os.Bundle
 import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
+import com.example.mqttforandroid.databinding.ActivityMainBinding
 import com.example.mqttforandroid.mqtt.Config
 import com.example.mqttforandroid.mqtt.MqttService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.eclipse.paho.client.mqttv3.MqttMessage
+import org.json.JSONObject
 
 class MainActivity : AppCompatActivity() {
-    private val channel = Channel<Boolean>()
+    private val msgFlow: MutableStateFlow<MqttMessage?> = MutableStateFlow(null)
+    private val statusFlow = MutableStateFlow(false)
+    private var mqttService: MqttService? = null
+
+    private lateinit var viewBinding: ActivityMainBinding
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
 
-        var mqttService: MqttService? = null
+        viewBinding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(viewBinding.root)
+
+        initMQtt()
+    }
+
+    private fun initMQtt() {
         mqttService = MqttService.init()
         val config = Config(
             host = "tcp://broker.emqx.io:1883",
@@ -31,18 +43,25 @@ class MainActivity : AppCompatActivity() {
             )
         )
 
+        mqttService!!.init(config, statusFlow, msgFlow).connect()
+
         CoroutineScope(Dispatchers.IO).launch {
-            mqttService.init(config, channel).connect()
-            val result = channel.receive()
-            Log.d("MqttForAndroid", "MainActivity::initMqtt(), channel:$result")
+            statusFlow.collect {
+                Log.d("MqttForAndroid", "${javaClass.simpleName}::onCreate(), mqtt connect status:$it")
+                if (it) {
+                    mqttService!!.subscribe("testMQ")
+                }
+            }
         }
 
         CoroutineScope(Dispatchers.IO).launch {
-            while (true) {
-                delay(100)
-                val connStatus = channel.receive()
-                if (connStatus) {
-                    mqttService.subscribe("testMQ")
+            msgFlow.collect {
+                Log.d("MqttForAndroid", "${javaClass.simpleName}::onCreate(), mqtt msg:$it")
+                withContext(Dispatchers.Main) {
+                    it?.let { msg ->
+                        val jsonMsg = JSONObject(String(msg.payload))
+                        viewBinding.textLabel.text = jsonMsg.getString("msg")
+                    }
                 }
             }
         }
